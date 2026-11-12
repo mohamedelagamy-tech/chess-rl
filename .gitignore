@@ -221,3 +221,6 @@ __marimo__/
 
 checkpoints/
 *.pt
+
+logs/test_*
+games/test/

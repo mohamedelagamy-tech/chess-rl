@@ -1,0 +1,9 @@
+[Event "?"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "Self-play"]
+[Black "Self-play"]
+[Result "0-1"]
+
+1. e3 f6 2. Ne2 c5 3. b4 g6 4. h3 e6 5. Rh2 d6 6. Nbc3 Nh6 7. Rb1 Qd7 8. g4 Nc6 9. d4 a5 10. f4 c4 11. a4 Ke7 12. Bg2 Bg7 13. Bb2 Rg8 14. Qd2 f5 15. Qd3 Ra7 16. Kd1 Ra6 17. h4 e5 18. Rh3 Qe6 19. Ke1 Qd5 20. Kd1 Qxd4 21. Ke1 Qxc3+ 22. Kd1 exf4 23. Ba1 f3 24. h5 b6 25. Rh4 Bb7 26. Rc1 b5 27. Rb1 cxd3 28. Rc1 dxe2# 0-1

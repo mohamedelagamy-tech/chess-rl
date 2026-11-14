@@ -2,7 +2,7 @@
 
 A chess agent that learns by playing itself. It is built from scratch in PyTorch: a policy/value neural network, Monte Carlo Tree Search, and a self-play training loop, in the style of AlphaZero but scaled down to run on a laptop.
 
-> **Status: work in progress, with an honest negative result.** The full pipeline runs end to end, but training does not yet improve the agent. In a 30-game evaluation against a random player, every network trained by self-play scores lower than the *untrained* network with search. This README documents the experiments, what each one showed, and what is being tried next.
+> **Status: work in progress, with an honest negative result.** The full pipeline runs end to end, but training does not yet improve the agent. In a 30-game evaluation against a random player, every network trained by self-play scores lower than the *untrained* network with search, and self-play also made the best warm start (a value head pretrained on material) clearly worse. Distilling a deeper search on diverse positions (the latest experiment) is the first approach to train a policy that does not hurt, though 30-game samples keep that result suggestive rather than conclusive. This README documents the experiments, what each one showed, and what is being tried next.
 
 ## Why this project
 
@@ -81,7 +81,7 @@ Changes: a 1x1 convolution before the policy head, and `board.copy(stack=False)`
 
 ## Results
 
-30 games each, against a random player, 25 simulations per move.
+30 games each, against a random player, 25 simulations per move, `cPuct` 1.5 unless noted.
 
 | Player | W / D / L | Score | Material margin |
 |---|---|---|---|
@@ -95,6 +95,13 @@ Changes: a 1x1 convolution before the policy head, and `board.copy(stack=False)`
 | Run 4, gen 5 (dense material value targets) | 1 / 24 / 5 | 0.43 | -12.3 |
 | Run 4, gen 10 | 2 / 26 / 2 | 0.50 | -9.4 |
 | Value head pretrained on material (no self-play) | 0 / 29 / 1 | 0.48 | +8.0 |
+| Untrained network (Gen 0) + search, `cPuct` 4.0 | 10 / 20 / 0 | 0.67 | +0.3 |
+| Value head pretrained on material, `cPuct` 4.0 | 3 / 25 / 2 | 0.52 | +6.4 |
+| Run 5, gen 5 (self-play from the warm start), `cPuct` 4.0 | 0 / 24 / 6 | 0.40 | -10.9 |
+| Run 5, gen 10, `cPuct` 4.0 | 0 / 25 / 5 | 0.42 | -13.6 |
+| Run 5, gen 10, policy ignored, `cPuct` 4.0 | 4 / 25 / 1 | 0.55 | +5.5 |
+| Distilled generation 1 (policy on), `cPuct` 4.0 | 7 / 22 / 1 | 0.60 | +3.8 |
+| Distilled generation 1, policy ignored, `cPuct` 4.0 | 2 / 26 / 2 | 0.50 | +5.9 |
 
 ## Experiments
 
@@ -141,14 +148,70 @@ So the architecture and the training step are fine: the failure in runs 1 to 4 c
 
 Pretraining the value head on the synthetic positions (test correlation 0.936) and then using it with search, with no self-play, gives the highest material margin so far (+8.0 vs +4.5), but **no wins** (0 / 29 / 1 against 13 / 16 / 1 for the untrained network).
 
-**Open hypothesis:** an informed value head makes the search follow a few promising lines, and with only 25 simulations over about 30 legal moves it no longer tries every move, so it misses checkmates that the untrained network finds by exploring everything. This is being tested next with a mate-in-one probe and the exploration constant `cPuct`.
+**Why no wins?** An informed value head makes the search follow its favorite lines, and with only 25 simulations over about 30 legal moves it can stop trying every move, so it misses checkmates that the untrained network finds by exploring everything. A probe of five mate-in-one positions (25 simulations) supports this:
+
+| Network | `cPuct` 1.5 | `cPuct` 4.0 |
+|---|---|---|
+| Untrained (Gen 0) | 5 of 5 | 5 of 5 |
+| Pretrained value head | 3 of 5 | 5 of 5 |
+
+Raising the exploration constant to 4.0 helped in full games, but only partly:
+
+| Player (30 games vs random) | W / D / L | Score | Margin |
+|---|---|---|---|
+| Untrained, `cPuct` 1.5 | 13 / 16 / 1 | 0.70 | +4.5 |
+| Untrained, `cPuct` 4.0 | 10 / 20 / 0 | 0.67 | +0.3 |
+| Pretrained value head, `cPuct` 1.5 | 0 / 29 / 1 | 0.48 | +8.0 |
+| Pretrained value head, `cPuct` 4.0 | 3 / 25 / 2 | 0.52 | +6.4 |
+
+The pretrained agent tends to win more material than the untrained one (+8.0 and +6.4 vs +4.5 and +0.3, though individual differences are close to the noise level of 30 games), but it converts far fewer games into checkmates. The probe (5 of 5) over-predicted the effect: it only tests mates in one move, while real games need mating plans several moves deep. The higher `cPuct` also appeared to cost the untrained network about four margin points, so it is a trade-off and not a free fix.
+
+### Run 5: self-play from the warm start
+
+Setup: start from the pretrained value head, learning rate 3e-4 (instead of 1e-3), material-only value targets (checkmate is left to the search), 30 training steps per generation, `cPuct` 4.0 in self-play, root noise. The aim was to let self-play refine a network that already knew material.
+
+The value loss stayed low (0.16 to 0.026), so the value head remained accurate on self-play positions, and the policy loss was still falling (8.19 to 5.23). Self-play checkmates were concentrated in the first four generations (3, 5, 6 and 2 of 8 games) and almost absent afterwards. Strength fell clearly: from a material margin of +6.4 for the warm start to -10.9 at generation 5 and -13.6 at generation 10, with no wins.
+
+The saved games (one per generation) showed three of the first ten reaching the 200-ply cap with material imbalances of 9 to 14 points, and eight of the nine games with a material difference favoring Black. A direct test by color found no asymmetry (below), so the Black-favoring games were most likely chance.
+
+**Diagnosis.** Three measurements isolate the cause:
+
+| Measurement | Result |
+|---|---|
+| Prior sharpness (highest prior x number of legal moves; 1.0 = uniform) | untrained 1.06, warm start 1.14, **run 5 gen 10: 5.09** |
+| Results by color, run 5 gen 10 (margin) | White -11.2, Black -11.1 (warm start: +8.4 / +10.0) |
+| Run 5 gen 10 with its policy ignored (uniform priors) | 4 / 25 / 1, score 0.55, margin **+5.5** (vs -13.6 with its policy) |
+
+The trained policy made the priors peaked (about five times more concentrated than uniform) while its loss showed it was still poorly fitted. Switching it off restored the warm-start strength, so **the loss of strength came from the policy priors**. The value head and trunk came through self-play intact, but also learned nothing beyond material. A partially trained policy is worse than no policy, because the search trusts it and stops exploring the moves it dislikes.
+
+### Search distillation on diverse positions
+
+Plain self-play produces a narrow, repetitive stream of positions (games end in repetition loops), which is a plausible reason the policy learned peaked but poor priors. This experiment keeps search as the policy-improvement step but changes where the positions come from:
+
+- **Teacher:** the search with 100 simulations, using the pretrained value head and uniform priors.
+- **Positions:** 2,300 positions from random games (no self-play loops), plus a held-out set of 300 that are never trained on. Collecting them took 936 seconds.
+- **Student:** the network, trained to predict the teacher's visit distribution (and material for the value head), for 300 steps.
+
+| Measurement | Result |
+|---|---|
+| Held-out policy loss | 8.31 before training, 6.16 after (training loss in the last chunk: 5.63) |
+| Distilled network vs random (30 games, `cPuct` 4.0) | 7 / 22 / 1, score 0.60, margin +3.8 |
+| Same network with its policy ignored | 2 / 26 / 2, score 0.50, margin +5.9 |
+| Prior sharpness | 4.84 |
+
+The held-out loss fell substantially, so the policy is learning something that generalizes, with a moderate gap to the training loss and a loss still far from converged. With the policy switched on, the agent won 7 games against 2 with it ignored, the reverse of run 5, where the policy cost about 19 margin points. The win difference is suggestive but not conclusive at 30 games (Fisher exact test p of about 0.15), and the margin was slightly lower with the policy on, within noise. Against run 5's generation 10 (0 wins), 7 wins is a clear difference (p of about 0.01).
+
+Prior sharpness was about the same as run 5's (4.84 vs 5.09) even though this policy does not hurt, so **sharpness alone does not separate good priors from bad ones**: what matters is whether the peaks are informed.
 
 ## Lessons so far
 
 - **Falling loss is not strength.** Every run's loss curve went down; none of them improved the player. Measure play, not loss.
 - **Check that a change actually ran.** Run 2's new rule never fired, and only the saved games showed it.
 - **Use a metric that can see progress.** The win/draw score hid large differences that the material margin showed.
+- **A partially trained policy can be worse than none.** Ablating the policy head recovered all of the lost strength: the search trusts priors it should not.
+- **Peaked priors are not necessarily bad priors.** A policy trained on diverse, search-derived targets was as peaked as the harmful one but did not hurt.
 - **Test components in isolation.** A two-minute supervised test ruled out the network as the cause, where a full run takes an hour.
+- **A probe is not a measurement.** The mate-in-one probe predicted a full recovery at a higher exploration constant; full games recovered only part of it.
 - **Check measurements for enough independent samples.** Two early diagnostics used consecutive positions from only a few games and were discarded.
 
 ## Limitations
@@ -168,8 +231,10 @@ Pretraining the value head on the synthetic positions (test correlation 0.936) a
 - [x] Profile-guided speed-up
 - [x] Diagnosis of why pure self-play stalls (runs 1 to 4, ablation, unit test)
 - [x] Material-aware value head via pretraining
-- [ ] Mate-in-one probe and exploration settings (`cPuct`, simulations)
-- [ ] Self-play starting from the pretrained value head
+- [x] Mate-in-one probe and first exploration-constant (`cPuct`) test
+- [x] Self-play starting from the pretrained value head (run 5): made the agent worse
+- [x] Policy improvement by distilling the search on diverse positions, first generation
+- [ ] Iterate the distillation (generations 2 and up) and measure strength per generation
 - [ ] Longer training runs
 - [ ] Strength measured against a stronger baseline, and a strength curve across generations
 - [ ] Deployment as a Lichess bot
@@ -179,10 +244,18 @@ Pretraining the value head on the synthetic positions (test correlation 0.936) a
 
 ```
 chess-rl/
-├── notebooks/       # the working notebook
+├── notebooks/
 ├── docs/            # figures used in this README
 ├── logs/            # per-run metrics (CSV)
 ├── games/           # saved games (PGN)
 ├── checkpoints/     # model weights (not tracked by Git)
 └── README.md
 ```
+
+## Running it
+
+```bash
+pip install python-chess torch matplotlib pandas
+```
+
+Open `notebooks/01_foundations.ipynb` and run the cells from top to bottom. Self-play is CPU-heavy: a 10-generation run of 8 games each takes on the order of an hour on a laptop.

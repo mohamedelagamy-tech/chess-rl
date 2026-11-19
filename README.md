@@ -2,7 +2,7 @@
 
 A chess agent that learns by playing itself. It is built from scratch in PyTorch: a policy/value neural network, Monte Carlo Tree Search, and a self-play training loop, in the style of AlphaZero but scaled down to run on a laptop.
 
-> **Status: work in progress, with an honest negative result.** The full pipeline runs end to end, but training does not yet improve the agent. In a 30-game evaluation against a random player, every network trained by self-play scores lower than the *untrained* network with search, and self-play also made the best warm start (a value head pretrained on material) clearly worse. Distilling a deeper search on diverse positions (the latest experiment) is the first approach to train a policy that does not hurt, though 30-game samples keep that result suggestive rather than conclusive. This README documents the experiments, what each one showed, and what is being tried next.
+> **Status: work in progress, with an honest negative result.** The full pipeline runs end to end, but training does not yet improve the agent. In a 30-game evaluation against a random player, every network trained by self-play scores lower than the *untrained* network with search, and self-play also made the best warm start (a value head pretrained on material) clearly worse. Distilling a deeper search on diverse positions is the first approach to train a policy that does not hurt, but iterating it degraded the agent after about three generations. This README documents the experiments, what each one showed, and what is being tried next.
 
 ## Why this project
 
@@ -102,6 +102,11 @@ Changes: a 1x1 convolution before the policy head, and `board.copy(stack=False)`
 | Run 5, gen 10, policy ignored, `cPuct` 4.0 | 4 / 25 / 1 | 0.55 | +5.5 |
 | Distilled generation 1 (policy on), `cPuct` 4.0 | 7 / 22 / 1 | 0.60 | +3.8 |
 | Distilled generation 1, policy ignored, `cPuct` 4.0 | 2 / 26 / 2 | 0.50 | +5.9 |
+| Distilled generation 2, `cPuct` 4.0 | 7 / 22 / 1 | 0.60 | +1.8 |
+| Distilled generation 3 | 6 / 23 / 1 | 0.58 | +0.7 |
+| Distilled generation 4 | 2 / 24 / 4 | 0.47 | -6.8 |
+| Distilled generation 5 | 0 / 26 / 4 | 0.43 | -5.3 |
+| Distilled generation 5, policy ignored | 2 / 28 / 0 | 0.53 | +7.5 |
 
 ## Experiments
 
@@ -203,12 +208,41 @@ The held-out loss fell substantially, so the policy is learning something that g
 
 Prior sharpness was about the same as run 5's (4.84 vs 5.09) even though this policy does not hurt, so **sharpness alone does not separate good priors from bad ones**: what matters is whether the peaks are informed.
 
+#### Iterating the distillation (generations 2 to 5)
+
+Each generation used the current network as the teacher (100 simulations) on 2,000 fresh random-game positions, trained 300 steps on a buffer holding roughly the last three generations, and was evaluated on 30 games.
+
+![Distillation generations](docs/distill_curves.png)
+
+| Generation | Train policy loss | Held-out policy loss | W / D / L | Score | Margin |
+|---|---|---|---|---|---|
+| 1 | 5.63 (last 100 steps) | 6.16 | 7 / 22 / 1 | 0.60 | +3.8 |
+| 2 | 4.47 | 6.10 | 7 / 22 / 1 | 0.60 | +1.8 |
+| 3 | 3.61 | 5.93 | 6 / 23 / 1 | 0.58 | +0.7 |
+| 4 | 2.89 | 6.19 | 2 / 24 / 4 | 0.47 | -6.8 |
+| 5 | 2.59 | 6.58 | 0 / 26 / 4 | 0.43 | -5.3 |
+
+**Reading:** the approach held its strength for two generations and then degraded. Training loss fell every generation, while held-out loss reached its minimum at generation 3 and then rose. Strength fell in step: 7 wins at generation 2 against 0 at generation 5 (Fisher exact test p of about 0.01), and the margin went from +3.8 to about -5.
+
+**Diagnosis.** The widening gap between training and held-out loss looked like memorization, but a direct test said otherwise:
+
+| Measurement (generation 5) | Result |
+|---|---|
+| Policy loss on 300 fresh positions, with targets from its own teacher | 2.43 (training loss was 2.59) |
+| Policy loss on the original held-out set | 6.56 |
+| Prior sharpness | 9.45 |
+| Strength with its policy | 0 / 26 / 4, score 0.43, margin -5.3 |
+| Strength with its policy ignored (uniform priors) | 2 / 28 / 0, score 0.53, margin +7.5 |
+
+The network predicts its own teacher well on unseen positions, so it is not memorizing. It has learned to imitate its own search, whose visits follow its own priors, so each generation reinforces and sharpens the previous one's preferences (priors about nine times more concentrated than uniform) while drifting away from the original teacher. This is a self-confirming loop. The rest of the network is fine: switching the policy off gives the best margin so far and the first run with no losses.
+
 ## Lessons so far
 
 - **Falling loss is not strength.** Every run's loss curve went down; none of them improved the player. Measure play, not loss.
 - **Check that a change actually ran.** Run 2's new rule never fired, and only the saved games showed it.
 - **Use a metric that can see progress.** The win/draw score hid large differences that the material margin showed.
 - **A partially trained policy can be worse than none.** Ablating the policy head recovered all of the lost strength: the search trusts priors it should not.
+- **A widening train/held-out gap is not always memorization.** A test on fresh positions showed the network predicted its own teacher well; the gap came from the policy following its own search and drifting away from the original teacher.
 - **Peaked priors are not necessarily bad priors.** A policy trained on diverse, search-derived targets was as peaked as the harmful one but did not hurt.
 - **Test components in isolation.** A two-minute supervised test ruled out the network as the cause, where a full run takes an hour.
 - **A probe is not a measurement.** The mate-in-one probe predicted a full recovery at a higher exploration constant; full games recovered only part of it.
@@ -234,7 +268,8 @@ Prior sharpness was about the same as run 5's (4.84 vs 5.09) even though this po
 - [x] Mate-in-one probe and first exploration-constant (`cPuct`) test
 - [x] Self-play starting from the pretrained value head (run 5): made the agent worse
 - [x] Policy improvement by distilling the search on diverse positions, first generation
-- [ ] Iterate the distillation (generations 2 and up) and measure strength per generation
+- [x] Iterate the distillation (generations 2 to 5): held strength for two generations, then degraded
+- [ ] Supervised bootstrap on Stockfish-evaluated positions (Lichess evaluation database), then search on top
 - [ ] Longer training runs
 - [ ] Strength measured against a stronger baseline, and a strength curve across generations
 - [ ] Deployment as a Lichess bot
@@ -251,11 +286,3 @@ chess-rl/
 ├── checkpoints/     # model weights (not tracked by Git)
 └── README.md
 ```
-
-## Running it
-
-```bash
-pip install python-chess torch matplotlib pandas
-```
-
-Open `notebooks/01_foundations.ipynb` and run the cells from top to bottom. Self-play is CPU-heavy: a 10-generation run of 8 games each takes on the order of an hour on a laptop.

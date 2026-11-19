@@ -224,3 +224,4 @@ checkpoints/
 
 logs/test_*
 games/test/
+data/

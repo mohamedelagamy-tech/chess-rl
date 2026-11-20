@@ -236,6 +236,22 @@ Each generation used the current network as the teacher (100 simulations) on 2,0
 
 The network predicts its own teacher well on unseen positions, so it is not memorizing. It has learned to imitate its own search, whose visits follow its own priors, so each generation reinforces and sharpens the previous one's preferences (priors about nine times more concentrated than uniform) while drifting away from the original teacher. This is a self-confirming loop. The rest of the network is fine: switching the policy off gives the best margin so far and the first run with no losses.
 
+### Supervised bootstrap on Stockfish-evaluated positions
+
+Since the learning loops that depend on the network's own search kept stalling, this experiment brings in outside information: the Lichess open evaluation database, a collection of positions evaluated by Stockfish (mostly at depth 30 or more). The network, search and training code are this project's own; Stockfish is used only through those published evaluations.
+
+- **Data:** the first 300,000 valid positions streamed from the database (1,426 invalid positions, 0.47%, were filtered out, including entries with more than 32 pieces).
+- **Labels:** the policy target is Stockfish's best move. The value target is `tanh(centipawns / 400)` from the mover's side. The stored scores are from White's perspective (checked against material, and against 300 of 300 mate-in-one entries).
+- **Training:** the same 2.2-million-parameter network, Adam with a cosine learning-rate schedule, batch size 256, 6 epochs of about 3.5 minutes each on a laptop CPU. Held-out set: 5,000 positions kept apart from training.
+
+| Training positions | Top-1 move agreement | Top-3 | Value correlation |
+|---|---|---|---|
+| 18,000 (8 epochs) | 9.4% | 20.1% | 0.615 |
+| 300,000 (6 epochs) | **24.1%** | **46.2%** | **0.743** |
+| Reference | about 3% (a random legal move) | n/a | 0.546 (material alone) |
+
+**Reading:** 16 times more data raised top-1 agreement from 9.4% to 24.1% and the value correlation from 0.615 to 0.743, well beyond what material alone explains. Held-out metrics flattened over epochs 4 to 6 as the learning rate decayed, so this network and dataset have mostly given what they can. Playing strength with search on top has not been measured yet.
+
 ## Lessons so far
 
 - **Falling loss is not strength.** Every run's loss curve went down; none of them improved the player. Measure play, not loss.
@@ -269,17 +285,19 @@ The network predicts its own teacher well on unseen positions, so it is not memo
 - [x] Self-play starting from the pretrained value head (run 5): made the agent worse
 - [x] Policy improvement by distilling the search on diverse positions, first generation
 - [x] Iterate the distillation (generations 2 to 5): held strength for two generations, then degraded
-- [ ] Supervised bootstrap on Stockfish-evaluated positions (Lichess evaluation database), then search on top
+- [x] Supervised bootstrap on Stockfish-evaluated positions: data pipeline and first training run (300,000 positions)
+- [ ] Strength of the supervised network with search on top (against random, then against Stockfish levels)
+- [ ] Game review with move classification, with its agreement with Stockfish measured
 - [ ] Longer training runs
 - [ ] Strength measured against a stronger baseline, and a strength curve across generations
 - [ ] Deployment as a Lichess bot
 - [ ] Demo video
 
-## Repository layout
+## Repo layout
 
 ```
 chess-rl/
-├── notebooks/
+├── notebooks/       # the working notebook
 ├── docs/            # figures used in this README
 ├── logs/            # per-run metrics (CSV)
 ├── games/           # saved games (PGN)

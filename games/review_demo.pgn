@@ -1,0 +1,9 @@
+[Event "?"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "Supervised bot"]
+[Black "Random"]
+[Result "*"]
+
+1. d4 d5 2. Nf3 g6 3. c4 h5 4. cxd5 Bf5 5. Nc3 e6 6. e4 h4 7. exf5 b6 8. fxe6 Be7 9. Bd3 c6 10. O-O Ba3 11. d6 Qxd6 12. exf7+ Ke7 13. Bxg6 Kd8 14. Qb3 Ne7 15. Qd1 Qxg6 16. d5 Qg4 17. d6 a6 18. dxe7+ Kc8 19. Qb3 Qh3 20. Qd1 Rf8 21. Qb3 Rxf7 22. Qd1 b5 23. b3 Rf4 24. g3 Qxh2+ 25. Kxh2 Bb2 26. Bxb2 Rf5 27. Nxh4 b4 28. Ne2 Ra5 29. Kh3 Ra7 30. Nf5 Ra3 31. g4 Rb7 32. Qc1 Rxa2 33. Kh4 Rxb2 34. Qxb2 c5 35. Kh5 Nd7 36. Kh6 a5 37. Nh4 Nf8 38. Rac1 Nh7 39. Kg7 Rd7 40. Kf7 Kb7 41. Kg6 Rd8 42. Kf7 Re8 43. Kg6 Rxe7 44. Nc3 Re8 45. Nd5 Ka8 46. Ne7 Rg8+ 47. Kf7 Rd8 48. Neg6 c4 49. bxc4 Rd5 50. Kg8 Rd4 51. Rfe1 Rxc4 52. Re2 Nf8 53. Ne5 Ka7 54. Nf7 Ka6 55. f3 Rf4 56. Nh6 Rc4 57. Ng6 Rc5 58. Ne5 Rc8 59. Nef7 Ra8 60. Re4 Rb8 *

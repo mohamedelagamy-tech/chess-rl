@@ -1,8 +1,8 @@
 # Chess RL
-
+Author: Mohamed Mazen Elagamy
 A chess agent that learns by playing itself. It is built from scratch in PyTorch: a policy/value neural network, Monte Carlo Tree Search, and a self-play training loop, in the style of AlphaZero but scaled down to run on a laptop.
 
-> **Status: work in progress, with an honest negative result.** The full pipeline runs end to end, but training does not yet improve the agent. In a 30-game evaluation against a random player, every network trained by self-play scores lower than the *untrained* network with search, and self-play also made the best warm start (a value head pretrained on material) clearly worse. Distilling a deeper search on diverse positions is the first approach to train a policy that does not hurt, but iterating it degraded the agent after about three generations. This README documents the experiments, what each one showed, and what is being tried next.
+> **Status: work in progress, with an honest negative result.** The full pipeline runs end to end, but learning from the agent's own search did not improve it. In 30-game evaluations against a random player, every network trained that way scores lower than the *untrained* network with search, and self-play also made the best warm start (a value head pretrained on material) clearly worse. Distilling a deeper search on diverse positions is the first approach to train a policy that does not hurt, but iterating it degraded the agent after about three generations. A supervised bootstrap on Stockfish-evaluated positions is the first approach that clearly improves the agent (17 wins, 13 draws and no losses against a random player, against 13 / 16 / 1 for the untrained network). This README documents the experiments, what each one showed, and what is being tried next.
 
 ## Why this project
 
@@ -107,6 +107,28 @@ Changes: a 1x1 convolution before the policy head, and `board.copy(stack=False)`
 | Distilled generation 4 | 2 / 24 / 4 | 0.47 | -6.8 |
 | Distilled generation 5 | 0 / 26 / 4 | 0.43 | -5.3 |
 | Distilled generation 5, policy ignored | 2 / 28 / 0 | 0.53 | +7.5 |
+| Supervised network (300k positions), `cPuct` 1.5 | 17 / 13 / 0 | 0.78 | +15.6 |
+| Supervised network, `cPuct` 4.0 | 15 / 15 / 0 | 0.75 | +19.3 |
+| Supervised network, policy ignored, `cPuct` 1.5 | 1 / 29 / 0 | 0.52 | +8.3 |
+
+## Game review (move classification)
+
+The trained network can also review a finished game and label every move, in the style of the reviews that chess sites offer.
+
+**How it works**
+1. Every position of the game is analyzed with the search (100 simulations), which gives the best move and its expected result.
+2. For each move played, the loss is the drop in expected score (0 to 1) between the best move and the move played.
+3. Labels by loss: **Best** (the search's top move, or under 0.03), **Good** (under 0.06), **Inaccuracy** (under 0.10), **Mistake** (under 0.20), **Blunder** (0.20 or more).
+4. **Great** is the top move when the second-best is at least 0.15 worse (a move that is hard to replace).
+5. **Brilliant** is the top move that gives up at least 2 points of material after the opponent's best reply, is not a reply to a check, and has high *insight*: the search rates the move much higher than the network's own static evaluation of the resulting position, meaning the idea looks bad at first glance and only search shows it works.
+
+The output is a per-move table, an accuracy score per side, a win-probability curve, and a board image with arrows for the move played and the engine's choice.
+
+**Limitations (stated plainly)**
+- The labels are the network's own opinion. They have not been validated against Stockfish, and the thresholds are heuristics chosen by hand, partly from one famous game.
+- Reviewing the bot's own games flatters it: the reviewer is the same network, so the bot agrees with itself. The accuracy score is therefore meaningful for games by other players, and should not be read as a strength measure for the bot.
+- Win probability saturates in decided positions, so moves are rarely flagged once a game is already lost or won.
+- The accuracy score (100 minus twice the average loss) is this project's own scale, not comparable to other sites' numbers.
 
 ## Experiments
 
@@ -250,7 +272,16 @@ Since the learning loops that depend on the network's own search kept stalling, 
 | 300,000 (6 epochs) | **24.1%** | **46.2%** | **0.743** |
 | Reference | about 3% (a random legal move) | n/a | 0.546 (material alone) |
 
-**Reading:** 16 times more data raised top-1 agreement from 9.4% to 24.1% and the value correlation from 0.615 to 0.743, well beyond what material alone explains. Held-out metrics flattened over epochs 4 to 6 as the learning rate decayed, so this network and dataset have mostly given what they can. Playing strength with search on top has not been measured yet.
+**Reading:** 16 times more data raised top-1 agreement from 9.4% to 24.1% and the value correlation from 0.615 to 0.743, well beyond what material alone explains. Held-out metrics flattened over epochs 4 to 6 as the learning rate decayed, so this network and dataset have mostly given what they can. 
+**Playing strength** (30 games against a random player, 25 simulations per move):
+
+| Variant | W / D / L | Score | Margin |
+|---|---|---|---|
+| Supervised network, `cPuct` 1.5 | 17 / 13 / 0 | 0.78 | +15.6 |
+| Supervised network, `cPuct` 4.0 | 15 / 15 / 0 | 0.75 | +19.3 |
+| Same network, policy ignored (uniform priors) | 1 / 29 / 0 | 0.52 | +8.3 |
+
+This is the first learned policy that clearly helps: switching it off drops the wins from 17 to 1 and the margin from +15.6 to +8.3. It has no losses, and it beats the untrained network's 13 / 16 / 1. Its priors are very peaked (sharpness 14.25 against 1.06 for an untrained network), yet informed, which confirms that sharpness alone does not separate good priors from bad ones. A random opponent is a weak test, and the 13 draws suggest the agent often wins material without finishing the game within the 200-ply cap (not yet checked); a calibrated opponent is next.
 
 ## Lessons so far
 
@@ -286,14 +317,15 @@ Since the learning loops that depend on the network's own search kept stalling, 
 - [x] Policy improvement by distilling the search on diverse positions, first generation
 - [x] Iterate the distillation (generations 2 to 5): held strength for two generations, then degraded
 - [x] Supervised bootstrap on Stockfish-evaluated positions: data pipeline and first training run (300,000 positions)
-- [ ] Strength of the supervised network with search on top (against random, then against Stockfish levels)
-- [ ] Game review with move classification, with its agreement with Stockfish measured
+- [x] Strength of the supervised network against a random player (17 / 13 / 0, score 0.78)
+- [ ] A calibrated strength number (Stockfish levels or a live Lichess rating): not done yet
+- [x] Game review with move classification (labels not validated against an engine)
 - [ ] Longer training runs
 - [ ] Strength measured against a stronger baseline, and a strength curve across generations
 - [ ] Deployment as a Lichess bot
 - [ ] Demo video
 
-## Repo layout
+## Repository layout
 
 ```
 chess-rl/

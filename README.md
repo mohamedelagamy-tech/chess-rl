@@ -1,8 +1,8 @@
 # Chess RL
-Author: Mohamed Mazen Elagamy
+
 A chess agent that learns by playing itself. It is built from scratch in PyTorch: a policy/value neural network, Monte Carlo Tree Search, and a self-play training loop, in the style of AlphaZero but scaled down to run on a laptop.
 
-> **Status: work in progress, with an honest negative result.** The full pipeline runs end to end, but learning from the agent's own search did not improve it. In 30-game evaluations against a random player, every network trained that way scores lower than the *untrained* network with search, and self-play also made the best warm start (a value head pretrained on material) clearly worse. Distilling a deeper search on diverse positions is the first approach to train a policy that does not hurt, but iterating it degraded the agent after about three generations. A supervised bootstrap on Stockfish-evaluated positions is the first approach that clearly improves the agent (17 wins, 13 draws and no losses against a random player, against 13 / 16 / 1 for the untrained network). This README documents the experiments, what each one showed, and what is being tried next.
+> **Status: work in progress, with an honest negative result.** The full pipeline runs end to end, but learning from the agent's own search did not improve it. In 30-game evaluations against a random player, every network trained that way scores lower than the *untrained* network with search, and self-play also made the best warm start (a value head pretrained on material) clearly worse. Distilling a deeper search on diverse positions is the first approach to train a policy that does not hurt, but iterating it degraded the agent after about three generations. A supervised bootstrap on Stockfish-evaluated positions is the first approach that clearly improves the agent (17 wins, 13 draws and no losses in one 30-game sample against a random player, against 13 / 16 / 1 for the untrained network; a second sample of the same agent gave 13 / 16 / 1, so single 30-game samples vary by several wins). Diagnosing the remaining draws showed that the move cap was not hiding wins: the agent cannot finish positions it is far ahead in. Making the search repetition-aware removed the repetition draws, and the missing endgame technique is the open problem. This README documents the experiments, what each one showed, and what is being tried next.
 
 ## Why this project
 
@@ -110,6 +110,63 @@ Changes: a 1x1 convolution before the policy head, and `board.copy(stack=False)`
 | Supervised network (300k positions), `cPuct` 1.5 | 17 / 13 / 0 | 0.78 | +15.6 |
 | Supervised network, `cPuct` 4.0 | 15 / 15 / 0 | 0.75 | +19.3 |
 | Supervised network, policy ignored, `cPuct` 1.5 | 1 / 29 / 0 | 0.52 | +8.3 |
+| Supervised network, `cPuct` 1.5 (second 30-game sample) | 13 / 16 / 1 | 0.70 | +19.4 |
+| Supervised network, repetition-aware search, `cPuct` 1.5 | 18 / 12 / 0 | 0.80 | +13.1 |
+
+**More training and more search did not help much.** Three more epochs at a low learning rate on the same 300,000 positions left held-out top-1 at 24.4% (24.1% before), so this network and dataset are saturated. On search budget, 50 simulations against 25 simulations in head-to-head games from random openings gave 4 wins, 28 draws and no losses over 32 games (material margin +4.0), but against a random player 50 simulations scored 9 / 21 / 0 (margin +18.2) where 25 simulations scored 17 / 13 / 0. These comparisons do not point the same way and none is conclusive. What they share is the draws: the agent wins material but often does not convert it into checkmate within 200 plies, which is its clearest weakness.
+
+## Draw diagnosis and repetition-aware search
+
+The supervised agent wins material against a random player but often fails to finish the game. This section checks why, and tests one fix.
+
+**How the draws were classified.** 30 games against a random player (25 simulations, `cPuct` 1.5, 200-ply cap). Every game was labelled by how it ended, and every game that hit the cap was resumed from its final position for 400 more plies.
+
+| How the games ended (supervised agent, 30 games) | Count |
+|---|---|
+| Checkmate, agent wins | 13 |
+| Checkmate, agent loses | 1 |
+| Fivefold repetition | 3 |
+| 200-ply cap | 13 |
+
+All 13 capped games were won on material: the opponent had 3 or fewer pieces and the agent led by 12 to 35 points (mean +19.0). Resuming them for 400 more plies gave 1 win and 12 draws (11 by fivefold repetition, 1 by the 75-move rule). **The cap was not hiding wins: the agent could not finish positions it was far ahead in.**
+
+**Reading.** The search cannot see repetitions (see Limitations) and picks its move by a deterministic argmax, so it drifts into repeated positions even when it is winning.
+
+**Repetition-aware search.** A separate agent (`makeRepAwarePlayer`, the plain agent is unchanged) treats any position that already occurred in the game, or that repeats inside a search line, as a draw (value 0). A side that is far ahead then prefers other moves. It was tested on the 13 stuck positions, restarted with a clean history and resumed for 120 plies:
+
+| Agent | Wins | Draws | Unfinished |
+|---|---|---|---|
+| Plain, 25 simulations | 3 | 8 | 2 |
+| Repetition-aware, 25 simulations | 5 | 0 | 8 |
+| Plain, 100 simulations | 3 | 4 | 6 |
+| Repetition-aware, 100 simulations | 6 | 0 | 7 |
+
+A repeat of the repetition-aware 25-simulation test, resumed for 160 plies, gave 3 wins, 1 draw and 9 unfinished, so the number of conversions varies by a couple of games from run to run.
+
+Full 30-game runs against a random player:
+
+| Agent | W / D / L | Repetition draws | Ply-cap draws | Material margin |
+|---|---|---|---|---|
+| Plain (second sample) | 13 / 16 / 1 | 3 | 13 | +19.4 |
+| Repetition-aware | 18 / 12 / 0 | 0 | 12 | +13.1 |
+
+**Reading.**
+- Repetition draws disappeared, in the full runs (0 against 3 of 30 games) and in the stuck positions (0 against 8 and 4 draws). This is the mechanical effect the change was designed for.
+- The change in the win count is within noise: the plain agent itself won 17 and 13 games in its two samples (30 of 60 pooled), against 18 of 30 here (Fisher exact test p of about 0.5 against the pooled plain agent).
+- The margin is measured when each game ends, so it is not directly comparable between agents whose games end at different times. This was not investigated further.
+
+**Larger draw diagnosis.** A seeded run of 60 games per agent compared the plain and repetition-aware players:
+
+| Agent | W / D / L | Checkmate | Ply cap | Fivefold repetition | Stalemate | Mean material margin |
+|---|---:|---:|---:|---:|---:|---:|
+| Plain | 29 / 30 / 1 | 30 | 22 | 8 | 0 | +17.1 |
+| Repetition-aware | 26 / 34 / 0 | 26 | 33 | 0 | 1 | +17.3 |
+
+The repetition-aware search eliminated fivefold-repetition endings in this sample (8 to 0), but ply-cap endings increased (22 to 33), while checkmates decreased (30 to 26). Mean material margins were nearly identical. This supports that repetition handling changes how games end, but does **not** show an overall improvement in converting advantages; the test is also not a direct head-to-head between the two agents.
+
+In a separate 24-game head-to-head against the untrained network, the supervised repetition-aware agent scored **12 wins, 11 draws, and 1 loss** (score **0.729**, reported mean material margin **+13.83**). This is encouraging but still a small sample and does not establish improved mating technique.
+
+**What is left.** Capped games remain common, including in the larger repetition-aware sample. The search can avoid repeating positions, but the available results do not show that the agent reliably converts material advantages into checkmate. The Stockfish-evaluated positions used for training were mostly middlegames, so the network saw few lopsided endgames.
 
 ## Game review (move classification)
 
@@ -121,6 +178,7 @@ The trained network can also review a finished game and label every move, in the
 3. Labels by loss: **Best** (the search's top move, or under 0.03), **Good** (under 0.06), **Inaccuracy** (under 0.10), **Mistake** (under 0.20), **Blunder** (0.20 or more).
 4. **Great** is the top move when the second-best is at least 0.15 worse (a move that is hard to replace).
 5. **Brilliant** is the top move that gives up at least 2 points of material after the opponent's best reply, is not a reply to a check, and has high *insight*: the search rates the move much higher than the network's own static evaluation of the resulting position, meaning the idea looks bad at first glance and only search shows it works.
+6. **Missed Win** is used when the position has a legal mate-in-one and the played move is not one of the mating moves. It identifies missed immediate checkmates only, not every missed winning advantage.
 
 The output is a per-move table, an accuracy score per side, a win-probability curve, and a board image with arrows for the move played and the engine's choice.
 
@@ -129,6 +187,8 @@ The output is a per-move table, an accuracy score per side, a win-probability cu
 - Reviewing the bot's own games flatters it: the reviewer is the same network, so the bot agrees with itself. The accuracy score is therefore meaningful for games by other players, and should not be read as a strength measure for the bot.
 - Win probability saturates in decided positions, so moves are rarely flagged once a game is already lost or won.
 - The accuracy score (100 minus twice the average loss) is this project's own scale, not comparable to other sites' numbers.
+- Label stability: reviewing the same two famous games at 100 and at 200 simulations gave the same label for 31 of 45 moves (Immortal Game) and 34 of 47 (Evergreen Game), about 70%, so labels near a threshold should be read as approximate.
+- On famous games, Brilliant fired on the queen sacrifice 21.Qxd7+ in the Evergreen Game and nowhere in the Immortal Game, where two of the famous sacrifices (18.Bd6 and 19.e5) were rated Mistakes by the network. Brilliant is experimental.
 
 ## Experiments
 
@@ -281,7 +341,7 @@ Since the learning loops that depend on the network's own search kept stalling, 
 | Supervised network, `cPuct` 4.0 | 15 / 15 / 0 | 0.75 | +19.3 |
 | Same network, policy ignored (uniform priors) | 1 / 29 / 0 | 0.52 | +8.3 |
 
-This is the first learned policy that clearly helps: switching it off drops the wins from 17 to 1 and the margin from +15.6 to +8.3. It has no losses, and it beats the untrained network's 13 / 16 / 1. Its priors are very peaked (sharpness 14.25 against 1.06 for an untrained network), yet informed, which confirms that sharpness alone does not separate good priors from bad ones. A random opponent is a weak test, and the 13 draws suggest the agent often wins material without finishing the game within the 200-ply cap (not yet checked); a calibrated opponent is next.
+This is the first learned policy that clearly helps: switching it off drops the wins from 17 to 1 and the margin from +15.6 to +8.3. It had no losses in that sample and beat the untrained network's 13 / 16 / 1; a second 30-game sample of the same agent gave 13 / 16 / 1 (see the diagnosis above), so these single samples vary by several wins and a larger evaluation is the number to trust. Its priors are very peaked (sharpness 14.25 against 1.06 for an untrained network), yet informed, which confirms that sharpness alone does not separate good priors from bad ones. A random opponent is a weak test, and the 13 draws suggest the agent often wins material without finishing the game within the 200-ply cap (checked in the diagnosis above); a calibrated opponent is next.
 
 ## Lessons so far
 
@@ -293,15 +353,18 @@ This is the first learned policy that clearly helps: switching it off drops the 
 - **Peaked priors are not necessarily bad priors.** A policy trained on diverse, search-derived targets was as peaked as the harmful one but did not hurt.
 - **Test components in isolation.** A two-minute supervised test ruled out the network as the cause, where a full run takes an hour.
 - **A probe is not a measurement.** The mate-in-one probe predicted a full recovery at a higher exploration constant; full games recovered only part of it.
+- **A draw at the move cap is not a lost win.** Resuming the capped games showed that more moves would not have helped; the agent was stuck, not out of time.
+- **At 30 games, count mechanisms, not just wins.** The plain agent's win count moved from 17 to 13 between two identical samples. The number of repetition draws and the stuck-position test are cleaner evidence than the win count.
 - **Check measurements for enough independent samples.** Two early diagnostics used consecutive positions from only a few games and were discarded.
 
 ## Limitations
 
 - Underpromotion is not supported: a pawn reaching the last rank always promotes to a queen.
 - The network input does not include castling rights, en passant availability, or repetition history. Move legality is handled by python-chess, so all of these moves are still played correctly. The network just cannot use them as signals when evaluating a position.
-- Inside the search, repetitions that occurred before the search started are not tracked (`board.copy(stack=False)`). The real game still ends on repetition normally.
+- The default search (`makeMCTSPlayer`) does not track repetitions that occurred before the search started (`board.copy(stack=False)`). The repetition-aware agent does: it treats any position already in the game, or repeated within a search line, as a draw. The real game still ends on repetition normally.
 - Material-based training targets inject domain knowledge (piece values), so they are not pure AlphaZero-style learning.
-- Evaluation is against a random player only, 30 games per entry, at a low simulation budget (25).
+- The agent often fails to convert winning positions into checkmate within 200 plies: 12 of 30 games against a random player still end at the cap with the opponent down to 3 or fewer pieces. Repetition-aware search removed the repetition draws, but the agent has no mating technique, because the network saw few lopsided endgames in training.
+- Evaluation is against a random player and earlier versions of this agent, 30 games per entry, mostly at 25 simulations. There is no external calibration (no Stockfish levels, no Lichess rating), so no rating is claimed.
 
 ## Roadmap
 
@@ -318,9 +381,13 @@ This is the first learned policy that clearly helps: switching it off drops the 
 - [x] Iterate the distillation (generations 2 to 5): held strength for two generations, then degraded
 - [x] Supervised bootstrap on Stockfish-evaluated positions: data pipeline and first training run (300,000 positions)
 - [x] Strength of the supervised network against a random player (17 / 13 / 0, score 0.78)
-- [ ] A calibrated strength number (Stockfish levels or a live Lichess rating): not done yet
+- [x] Draw diagnosis: how games end, and capped games resumed to see if they were wins
+- [x] Repetition-aware search (removes repetition draws)
+- [ ] Endgame technique (see the open problem in the draw diagnosis)
+- [ ] A calibrated strength number (Stockfish levels or a live Lichess rating): future work, left out of this release
 - [x] Game review with move classification (labels not validated against an engine)
-- [ ] Longer training runs
+- [x] Add and validate a missed mate-in-one label in game review
+- [-] Longer training runs(not really necessary since it saturated after the last run [24.1% → 24.4%])
 - [ ] Strength measured against a stronger baseline, and a strength curve across generations
 - [ ] Deployment as a Lichess bot
 - [ ] Demo video

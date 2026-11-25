@@ -164,6 +164,8 @@ Full 30-game runs against a random player:
 
 The repetition-aware search eliminated fivefold-repetition endings in this sample (8 to 0), but ply-cap endings increased (22 to 33), while checkmates decreased (30 to 26). Mean material margins were nearly identical. This supports that repetition handling changes how games end, but does **not** show an overall improvement in converting advantages; the test is also not a direct head-to-head between the two agents.
 
+**Resuming the capped games.** The 33 capped games of the repetition-aware agent in the 60-game run were resumed from their final positions for 200 more plies (the game history is kept, so the repetition rules still apply). 12 ended in checkmate, 3 in a draw (one by the 75-move rule, one by insufficient material and one by stalemate), and 18 were still unfinished. Counting these, the repetition-aware agent has 38 wins in 60 games within 400 plies and no losses. The plain agent's capped games were not resumed in this 60-game run; in the earlier 30-game sample, 1 of its 13 capped games converted in 400 more plies.
+
 In a separate 24-game head-to-head against the untrained network, the supervised repetition-aware agent scored **12 wins, 11 draws, and 1 loss** (score **0.729**, reported mean material margin **+13.83**). This is encouraging but still a small sample and does not establish improved mating technique.
 
 **What is left.** Capped games remain common, including in the larger repetition-aware sample. The search can avoid repeating positions, but the available results do not show that the agent reliably converts material advantages into checkmate. The Stockfish-evaluated positions used for training were mostly middlegames, so the network saw few lopsided endgames.
@@ -387,7 +389,7 @@ This is the first learned policy that clearly helps: switching it off drops the 
 - [ ] A calibrated strength number (Stockfish levels or a live Lichess rating): future work, left out of this release
 - [x] Game review with move classification (labels not validated against an engine)
 - [x] Add and validate a missed mate-in-one label in game review
-- [-] Longer training runs(not really necessary since it saturated after the last run [24.1% → 24.4%])
+- [x] Longer training runs(skipped as they are not really necessary since it saturated after the last run [24.1% → 24.4%])
 - [ ] Strength measured against a stronger baseline, and a strength curve across generations
 - [ ] Deployment as a Lichess bot
 - [ ] Demo video
